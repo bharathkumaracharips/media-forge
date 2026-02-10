@@ -1,0 +1,53 @@
+import { NextRequest, NextResponse } from "next/server";
+import { enhanceVideo } from "@/lib/ffmpeg-helper";
+import { writeFile, readFile, unlink } from "fs/promises";
+import path from "path";
+import os from "os";
+import { setProgress, clearProgress } from "@/lib/progress-store";
+
+export async function POST(req: NextRequest) {
+    let tempFilePath: string | null = null;
+    let processedFilePath: string | null = null;
+    const jobId = `enhance_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+
+    try {
+        const formData = await req.formData();
+        const file = formData.get("file") as File;
+
+        if (!file) {
+            return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+        }
+
+        setProgress(jobId, 0, "Uploading file...");
+
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const tempDir = os.tmpdir();
+        tempFilePath = path.join(tempDir, `enhance_${Date.now()}_${file.name}`);
+
+        await writeFile(tempFilePath, buffer);
+
+        processedFilePath = await enhanceVideo(tempFilePath, (progress, status) => {
+            setProgress(jobId, progress, status);
+        });
+
+        const processedBuffer = await readFile(processedFilePath);
+
+        clearProgress(jobId);
+
+        return new NextResponse(processedBuffer, {
+            headers: {
+                "Content-Type": "video/mp4",
+                "Content-Disposition": `attachment; filename="enhanced_${file.name}"`,
+                "X-Job-Id": jobId,
+            },
+        });
+
+    } catch (error) {
+        console.error("Error enhancing file:", error);
+        clearProgress(jobId);
+        return NextResponse.json({ error: "Enhancement failed: " + (error as Error).message }, { status: 500 });
+    } finally {
+        if (tempFilePath) await unlink(tempFilePath).catch(() => { });
+        if (processedFilePath) await unlink(processedFilePath).catch(() => { });
+    }
+}
