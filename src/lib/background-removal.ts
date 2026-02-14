@@ -43,22 +43,23 @@ export const removeVideoBackground = async (
     return new Promise((resolve, reject) => {
         ffmpeg(inputFile)
             .outputOptions([
-                // HIGH-QUALITY filter chain for preserving hair/beard detail:
-                // 1. Keep original resolution (no downscaling)
-                // 2. Chromakey with lower similarity to preserve dark hair
-                // 3. Despill filter to remove green color cast from edges
-                // 4. Overlay on solid color background
+                // SIMPLIFIED HIGH-QUALITY filter chain:
+                // 1. Apply chromakey and despill to input video
+                // 2. Create solid color background matching input size
+                // 3. Overlay the keyed video on the background (no centering needed - same size)
                 '-filter_complex',
-                `color=c=${backgroundColor}:s=1920x1080:d=10[bg];` +
                 `[0:v]chromakey=${chromaKeyColor}:similarity=${similarity}:blend=${blend}[keyed];` +
                 `[keyed]despill=${chromaKeyColor}[despilled];` +
-                `[bg][despilled]overlay=shortest=1:format=auto[out]`,
+                `[0:v]scale=iw:ih:flags=lanczos,drawbox=c=${backgroundColor}@1.0:replace=1:t=fill[bg];` +
+                `[bg][despilled]overlay=format=auto[out]`,
                 '-map', '[out]',
                 '-map', '0:a?',          // Map audio if it exists
                 '-c:v', 'libx264',
-                '-preset', 'medium',     // Better quality preset
-                '-crf', '23',            // Higher quality (lower CRF = better quality)
+                '-preset', 'slow',       // HIGHER quality preset (better compression)
+                '-crf', '18',            // MUCH higher quality (18 = near-lossless, 23 was medium)
                 '-pix_fmt', 'yuv420p',
+                '-profile:v', 'high',    // High profile for better quality
+                '-level', '4.2',         // H.264 level for high quality
                 '-c:a', 'copy',          // Copy audio without re-encoding
                 '-movflags', '+faststart',
                 '-threads', '0'          // Use all CPU cores
