@@ -34,7 +34,8 @@ export async function POST(req: NextRequest) {
         // Note: For very large files, streams should be used instead of Buffers
         const processedBuffer = await readFile(processedFilePath);
 
-        clearProgress(jobId);
+        // Clear progress after a delay to ensure SSE sends final 100% update
+        setTimeout(() => clearProgress(jobId), 1000);
 
         return new NextResponse(processedBuffer, {
             headers: {
