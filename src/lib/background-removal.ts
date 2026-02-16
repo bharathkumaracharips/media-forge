@@ -8,19 +8,17 @@ if (ffmpegPath) {
 }
 
 export interface BackgroundRemovalOptions {
+    backgroundType?: "color" | "image"; // Type of background replacement
     backgroundColor?: string; // Hex color like "#ffffff" or named color like "white"
+    backgroundImagePath?: string | null; // Path to background image file
     chromaKeyColor?: string;  // Color to remove (default: green)
     similarity?: number;      // 0.0-1.0, how similar colors to remove (default: 0.3)
     blend?: number;          // 0.0-1.0, edge blending (default: 0.1)
 }
 
 /**
- * Remove background from video and replace with solid color
- * Uses advanced chromakey filtering with edge refinement for quality preservation
- */
-/**
- * Remove background from video and replace with solid color
- * OPTIMIZED for speed - processes 5-10x faster than high-quality mode
+ * Remove background from video and replace with solid color or image
+ * OPTIMIZED for speed with image backgrounds using -loop input
  */
 export const removeVideoBackground = async (
     inputFile: string,
@@ -28,46 +26,59 @@ export const removeVideoBackground = async (
     onProgress?: (progress: number, status: string) => void
 ): Promise<string> => {
     const {
+        backgroundType = 'color',
         backgroundColor = '#ffffff',
+        backgroundImagePath = null,
         chromaKeyColor = 'green',
-        similarity = 0.10,  // LOWER default - very conservative, preserves hair/beard
-        blend = 0.05        // LOWER default - smoother edges on fine details
+        similarity = 0.10,
+        blend = 0.05
     } = options;
 
     const outputDir = path.dirname(inputFile);
     const finalOutput = path.join(outputDir, `bg_removed_${Date.now()}_${path.basename(inputFile)}`);
 
-    console.log(`Starting HIGH-QUALITY background removal for ${inputFile}`);
-    console.log(`Options:`, { backgroundColor, chromaKeyColor, similarity, blend });
+    console.log(`Starting OPTIMIZED background removal for ${inputFile}`);
+    console.log(`Options:`, { backgroundType, backgroundColor, backgroundImagePath, chromaKeyColor, similarity, blend });
 
     return new Promise((resolve, reject) => {
-        ffmpeg(inputFile)
-            .outputOptions([
-                // SIMPLIFIED HIGH-QUALITY filter chain:
-                // 1. Apply chromakey and despill to input video
-                // 2. Create solid color background matching input size
-                // 3. Overlay the keyed video on the background (no centering needed - same size)
-                '-filter_complex',
+        let ffmpegCommand = ffmpeg(inputFile);
+        let filterComplex: string;
+
+        if (backgroundType === 'image' && backgroundImagePath) {
+            // FAST approach: Use -loop 1 to repeat the image (10x faster than movie filter)
+            ffmpegCommand = ffmpegCommand.input(backgroundImagePath).inputOptions(['-loop', '1']);
+
+            filterComplex =
+                `[1:v][0:v]scale2ref=w=iw:h=ih:flags=fast_bilinear[bg][vid];` +
+                `[vid]chromakey=${chromaKeyColor}:similarity=${similarity}:blend=${blend}[keyed];` +
+                `[keyed]despill=${chromaKeyColor}[despilled];` +
+                `[bg][despilled]overlay=format=auto:shortest=1[out]`;
+        } else {
+            // Use solid color as background
+            filterComplex =
                 `[0:v]chromakey=${chromaKeyColor}:similarity=${similarity}:blend=${blend}[keyed];` +
                 `[keyed]despill=${chromaKeyColor}[despilled];` +
-                `[0:v]scale=iw:ih:flags=lanczos,drawbox=c=${backgroundColor}@1.0:replace=1:t=fill[bg];` +
-                `[bg][despilled]overlay=format=auto[out]`,
+                `[0:v]scale=iw:ih:flags=fast_bilinear,drawbox=c=${backgroundColor}@1.0:replace=1:t=fill[bg];` +
+                `[bg][despilled]overlay=format=auto[out]`;
+        }
+
+        ffmpegCommand
+            .outputOptions([
+                '-filter_complex', filterComplex,
                 '-map', '[out]',
-                '-map', '0:a?',          // Map audio if it exists
+                '-map', '0:a?',
                 '-c:v', 'libx264',
-                '-preset', 'slow',       // HIGHER quality preset (better compression)
-                '-crf', '18',            // MUCH higher quality (18 = near-lossless, 23 was medium)
+                '-preset', 'faster',     // FAST preset for speed
+                '-crf', '23',
                 '-pix_fmt', 'yuv420p',
-                '-profile:v', 'high',    // High profile for better quality
-                '-level', '4.2',         // H.264 level for high quality
-                '-c:a', 'copy',          // Copy audio without re-encoding
+                '-c:a', 'copy',
                 '-movflags', '+faststart',
-                '-threads', '0'          // Use all CPU cores
+                '-threads', '0'
             ])
             .save(finalOutput)
             .on('start', (cmd: any) => {
-                console.log('FFmpeg HIGH-QUALITY background removal command:', cmd);
-                onProgress?.(0, 'Starting high-quality background removal...');
+                console.log('FFmpeg OPTIMIZED command:', cmd);
+                onProgress?.(0, 'Starting optimized background removal...');
             })
             .on('progress', (progress: any) => {
                 if (progress.percent) {
@@ -77,7 +88,7 @@ export const removeVideoBackground = async (
                 }
             })
             .on('end', () => {
-                console.log('Finished HIGH-QUALITY background removal');
+                console.log('Finished OPTIMIZED background removal');
                 onProgress?.(100, 'Complete!');
                 resolve(finalOutput);
             })
@@ -106,9 +117,6 @@ export const removeBackgroundAuto = async (
     return new Promise((resolve, reject) => {
         ffmpeg(inputFile)
             .outputOptions([
-                // FAST simplified auto detection:
-                // Just use chromakey with white/black detection
-                // Much faster than edge detection
                 '-filter_complex',
                 `[0:v]scale=1280:720:flags=fast_bilinear[scaled];` +
                 `color=c=${backgroundColor}:s=1280x720:d=10[bg];` +

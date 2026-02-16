@@ -10,18 +10,43 @@ export async function GET(req: NextRequest) {
 
     const encoder = new TextEncoder();
 
+    let interval: NodeJS.Timeout;
+    let timeout: NodeJS.Timeout;
+
     const stream = new ReadableStream({
-        async start(controller) {
+        start(controller) {
+            let isClosed = false;
+
+            const closeStream = () => {
+                if (!isClosed) {
+                    isClosed = true;
+                    clearInterval(interval);
+                    clearTimeout(timeout);
+                    try {
+                        controller.close();
+                    } catch (e) {
+                        // Ignore if already closed
+                    }
+                }
+            };
+
             const sendProgress = () => {
+                if (isClosed) return true;
+
                 const progressData = getProgress(jobId);
 
                 if (progressData) {
                     const data = `data: ${JSON.stringify(progressData)}\n\n`;
-                    controller.enqueue(encoder.encode(data));
+                    try {
+                        controller.enqueue(encoder.encode(data));
+                    } catch (e) {
+                        closeStream();
+                        return true;
+                    }
 
                     // Close stream when complete
                     if (progressData.progress >= 100) {
-                        controller.close();
+                        closeStream();
                         return true;
                     }
                 }
@@ -32,19 +57,19 @@ export async function GET(req: NextRequest) {
             sendProgress();
 
             // Poll for updates every 500ms
-            const interval = setInterval(() => {
-                const isDone = sendProgress();
-                if (isDone) {
-                    clearInterval(interval);
-                }
+            interval = setInterval(() => {
+                sendProgress();
             }, 500);
 
             // Cleanup after 5 minutes
-            setTimeout(() => {
-                clearInterval(interval);
-                controller.close();
+            timeout = setTimeout(() => {
+                closeStream();
             }, 5 * 60 * 1000);
         },
+        cancel() {
+            clearInterval(interval);
+            clearTimeout(timeout);
+        }
     });
 
     return new Response(stream, {

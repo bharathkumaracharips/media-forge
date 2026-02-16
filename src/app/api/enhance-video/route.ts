@@ -8,7 +8,7 @@ import { setProgress, clearProgress } from "@/lib/progress-store";
 export async function POST(req: NextRequest) {
     let tempFilePath: string | null = null;
     let processedFilePath: string | null = null;
-    const jobId = `enhance_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    const jobId = req.headers.get("X-Job-Id") || `enhance_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
     try {
         const formData = await req.formData();

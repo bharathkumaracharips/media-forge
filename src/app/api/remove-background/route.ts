@@ -8,12 +8,16 @@ import { setProgress, clearProgress } from "@/lib/progress-store";
 export async function POST(req: NextRequest) {
     let tempFilePath: string | null = null;
     let processedFilePath: string | null = null;
+    let backgroundImagePath: string | null = null;
     const jobId = `remove_bg_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
     try {
         const formData = await req.formData();
         const file = formData.get("file") as File;
+        const backgroundTypeRaw = (formData.get("backgroundType") as string) || "color";
+        const backgroundType = (backgroundTypeRaw === "image" ? "image" : "color") as "color" | "image";
         const backgroundColor = (formData.get("backgroundColor") as string) || "#ffffff";
+        const backgroundImage = formData.get("backgroundImage") as File | null;
         const chromaKeyColor = (formData.get("chromaKeyColor") as string) || "green";
         const mode = (formData.get("mode") as string) || "chromakey"; // "chromakey" or "auto"
         const similarity = parseFloat((formData.get("similarity") as string) || "0.10");
@@ -33,6 +37,13 @@ export async function POST(req: NextRequest) {
 
         setProgress(jobId, 5, "Processing video...");
 
+        // Save background image if provided
+        if (backgroundType === "image" && backgroundImage) {
+            const bgBuffer = Buffer.from(await backgroundImage.arrayBuffer());
+            backgroundImagePath = path.join(tempDir, `bg_image_${Date.now()}_${backgroundImage.name}`);
+            await writeFile(backgroundImagePath, bgBuffer);
+        }
+
         // Choose processing mode
         if (mode === "auto") {
             processedFilePath = await removeBackgroundAuto(
@@ -46,7 +57,9 @@ export async function POST(req: NextRequest) {
             processedFilePath = await removeVideoBackground(
                 tempFilePath,
                 {
+                    backgroundType,
                     backgroundColor,
+                    backgroundImagePath,
                     chromaKeyColor,
                     similarity,
                     blend
@@ -79,5 +92,6 @@ export async function POST(req: NextRequest) {
     } finally {
         if (tempFilePath) await unlink(tempFilePath).catch(() => { });
         if (processedFilePath) await unlink(processedFilePath).catch(() => { });
+        if (backgroundImagePath) await unlink(backgroundImagePath).catch(() => { });
     }
 }
